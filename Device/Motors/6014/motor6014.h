@@ -13,6 +13,22 @@ extern "C" {
 typedef struct {
     Motor6014_Command_t cmd[MOTOR6014_SLOT_COUNT];
     volatile Motor6014_Data_t data[MOTOR6014_SLOT_COUNT];
+    volatile Motor6014_Status_t Set_status_port1;
+    volatile Motor6014_Status_t Send_status_port1;
+    volatile Motor6014_Status_t Set_status_port2;
+    volatile Motor6014_Status_t Send_status_port2;
+    volatile Motor6014_Status_t Set_status_port3;
+    volatile Motor6014_Status_t Send_status_port3;
+    volatile Motor6014_Status_t Set_status_port4;
+    volatile Motor6014_Status_t Send_status_port4;
+    volatile Motor6014_Status_t Set_status_port5;
+    volatile Motor6014_Status_t Send_status_port5;
+    volatile Motor6014_Status_t Set_status_port6;
+    volatile Motor6014_Status_t Send_status_port6;
+    volatile Motor6014_Status_t Set_status_port7;
+    volatile Motor6014_Status_t Send_status_port7;
+    volatile Motor6014_Status_t Set_status_port8;
+    volatile Motor6014_Status_t Send_status_port8;
 } Motor6014_State_t;
 
 extern Motor6014_State_t motor6014;
@@ -58,9 +74,10 @@ Motor6014_Status_t Motor6014_PortInit(
     Motor6014_Port_t *port, UART_HandleTypeDef *huart, uint32_t timeout_ms);
 
 /* Validate and store one command. This does not start UART transmission.
- * All physical quantities are at the rotor shaft. A successful call records
- * the unquantized arguments in cmd[id], even if a later SendCommand fails. */
-Motor6014_Status_t Motor6014_SetCommand(
+ * All physical quantities are at the rotor shaft. The unquantized arguments
+ * are recorded in cmd[id] on success; the result is written to the
+ * Set_status_portN field selected from huart->Instance. */
+void Motor6014_SetCommand(
     UART_HandleTypeDef *huart,
     uint8_t id,
     Motor6014_Mode_t mode,
@@ -71,10 +88,11 @@ Motor6014_Status_t Motor6014_SetCommand(
     float kd,
     bool timeout_enable);
 
-/* Send the command previously stored by SetCommand. OK means DMA accepted
- * the request, not motor acceptance. The call may be made from an ISR when
- * the UART is idle; timeout recovery is deferred to a main-context call. */
-Motor6014_Status_t Motor6014_SendCommand(
+/* Send the command previously stored by SetCommand. The result is written to
+ * the Send_status_portN field selected from huart->Instance. OK means DMA
+ * accepted the request, not motor acceptance. The call may be made from an
+ * ISR when the UART is idle; timeout recovery is deferred to main context. */
+void Motor6014_SendCommand(
     UART_HandleTypeDef *huart, uint8_t id);
 
 /* Copy a coherent feedback snapshot. NO_DATA leaves *data unchanged. */

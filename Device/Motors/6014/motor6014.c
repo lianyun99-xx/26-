@@ -31,6 +31,73 @@ static Motor6014_Port_t *FindPort(UART_HandleTypeDef *huart)
     return NULL;
 }
 
+/* Map the HAL peripheral instance to the numeric port suffix used by the
+ * public status fields. Unknown instances deliberately return zero and do not
+ * modify any status field. */
+static uint8_t StatusPortNumber(const UART_HandleTypeDef *huart)
+{
+    if (huart == NULL || huart->Instance == NULL) {
+        return 0U;
+    }
+    if (huart->Instance == USART1) {
+        return 1U;
+    }
+    if (huart->Instance == USART2) {
+        return 2U;
+    }
+    if (huart->Instance == USART3) {
+        return 3U;
+    }
+    if (huart->Instance == UART4) {
+        return 4U;
+    }
+    if (huart->Instance == UART5) {
+        return 5U;
+    }
+    if (huart->Instance == USART6) {
+        return 6U;
+    }
+    if (huart->Instance == UART7) {
+        return 7U;
+    }
+    if (huart->Instance == UART8) {
+        return 8U;
+    }
+    return 0U;
+}
+
+static void StoreSetStatus(
+    UART_HandleTypeDef *huart, Motor6014_Status_t status)
+{
+    switch (StatusPortNumber(huart)) {
+    case 1U: motor6014.Set_status_port1 = status; break;
+    case 2U: motor6014.Set_status_port2 = status; break;
+    case 3U: motor6014.Set_status_port3 = status; break;
+    case 4U: motor6014.Set_status_port4 = status; break;
+    case 5U: motor6014.Set_status_port5 = status; break;
+    case 6U: motor6014.Set_status_port6 = status; break;
+    case 7U: motor6014.Set_status_port7 = status; break;
+    case 8U: motor6014.Set_status_port8 = status; break;
+    default: break;
+    }
+}
+
+static void StoreSendStatus(
+    UART_HandleTypeDef *huart, Motor6014_Status_t status)
+{
+    switch (StatusPortNumber(huart)) {
+    case 1U: motor6014.Send_status_port1 = status; break;
+    case 2U: motor6014.Send_status_port2 = status; break;
+    case 3U: motor6014.Send_status_port3 = status; break;
+    case 4U: motor6014.Send_status_port4 = status; break;
+    case 5U: motor6014.Send_status_port5 = status; break;
+    case 6U: motor6014.Send_status_port6 = status; break;
+    case 7U: motor6014.Send_status_port7 = status; break;
+    case 8U: motor6014.Send_status_port8 = status; break;
+    default: break;
+    }
+}
+
 static bool ValidDMA(const DMA_HandleTypeDef *dma, uint32_t direction, uint32_t mode)
 {
     return dma->Init.Direction == direction && dma->Init.Mode == mode
@@ -166,24 +233,27 @@ Motor6014_Status_t Motor6014_PortInit(
     return MOTOR6014_OK;
 }
 
-Motor6014_Status_t Motor6014_SetCommand(
+void Motor6014_SetCommand(
     UART_HandleTypeDef *huart, uint8_t id, Motor6014_Mode_t mode,
     float position, float velocity, float torque, float kp, float kd,
     bool timeout_enable)
 {
     Motor6014_Command_t command = {0};
     uint8_t frame[MOTOR6014_TX_SIZE];
-    Motor6014_Status_t status;
+    Motor6014_Status_t status = MOTOR6014_INVALID_ARGUMENT;
     uint32_t mask;
 
     if (id < MOTOR6014_ID_MIN || id > MOTOR6014_ID_MAX) {
-        return MOTOR6014_INVALID_ID;
+        status = MOTOR6014_INVALID_ID;
+        goto done;
     }
     if (huart == NULL) {
-        return MOTOR6014_INVALID_ARGUMENT;
+        status = MOTOR6014_INVALID_ARGUMENT;
+        goto done;
     }
     if (FindPort(huart) == NULL) {
-        return MOTOR6014_NOT_INITIALIZED;
+        status = MOTOR6014_NOT_INITIALIZED;
+        goto done;
     }
     command.mode = mode;
     command.position = position;
@@ -194,12 +264,13 @@ Motor6014_Status_t Motor6014_SetCommand(
     command.timeout_enable = timeout_enable;
     status = Motor6014_EncodeCommand(id, &command, frame);
     if (status != MOTOR6014_OK) {
-        return status;
+        goto done;
     }
     mask = Lock();
     motor6014.cmd[id] = command;
     Unlock(mask);
-    return MOTOR6014_OK;
+done:
+    StoreSetStatus(huart, status);
 }
 
 /* The blocking HAL abort functions must never run with the tick disabled or
@@ -268,47 +339,52 @@ static Motor6014_Status_t PreparePort(Motor6014_Port_t *port)
     return MOTOR6014_OK;
 }
 
-Motor6014_Status_t Motor6014_SendCommand(UART_HandleTypeDef *huart, uint8_t id)
+void Motor6014_SendCommand(UART_HandleTypeDef *huart, uint8_t id)
 {
     Motor6014_Command_t command;
     uint8_t frame[MOTOR6014_TX_SIZE];
     Motor6014_Port_t *port;
     Motor6014_Port_t *other;
-    Motor6014_Status_t status;
+    Motor6014_Status_t status = MOTOR6014_INVALID_ARGUMENT;
     HAL_StatusTypeDef hal_status;
     uint32_t mask;
 
     if (id < MOTOR6014_ID_MIN || id > MOTOR6014_ID_MAX) {
-        return MOTOR6014_INVALID_ID;
+        status = MOTOR6014_INVALID_ID;
+        goto done;
     }
     if (huart == NULL) {
-        return MOTOR6014_INVALID_ARGUMENT;
+        status = MOTOR6014_INVALID_ARGUMENT;
+        goto done;
     }
     port = FindPort(huart);
     if (port == NULL) {
-        return MOTOR6014_NOT_INITIALIZED;
+        status = MOTOR6014_NOT_INITIALIZED;
+        goto done;
     }
     mask = Lock();
     command = motor6014.cmd[id];
     Unlock(mask);
     status = Motor6014_EncodeCommand(id, &command, frame);
     if (status != MOTOR6014_OK) {
-        return status;
+        goto done;
     }
     status = PreparePort(port);
     if (status != MOTOR6014_OK) {
-        return status;
+        goto done;
     }
     mask = Lock();
     if (port->busy || !port->rx_running) {
         Unlock(mask);
-        return MOTOR6014_BUSY;
+        status = MOTOR6014_BUSY;
+        goto done;
     }
     /* Global IDs must also not have concurrent transactions on two UARTs. */
     for (other = ports; other != NULL; other = other->next) {
         if (other->busy && other->pending_id == id) {
             Unlock(mask);
-            return MOTOR6014_BUSY;
+            status = MOTOR6014_BUSY;
+            goto done;
         }
     }
     memcpy(port->tx_buffer, frame, sizeof(frame));
@@ -323,12 +399,15 @@ Motor6014_Status_t Motor6014_SendCommand(UART_HandleTypeDef *huart, uint8_t id)
         port->pending_id = 0U;
         port->last_status = hal_status == HAL_BUSY ? MOTOR6014_BUSY : MOTOR6014_UART_ERROR;
         Unlock(mask);
-        return port->last_status;
+        status = port->last_status;
+        goto done;
     }
     port->stats.tx_count++;
     port->last_status = MOTOR6014_BUSY;
     Unlock(mask);
-    return MOTOR6014_OK;
+    status = MOTOR6014_OK;
+done:
+    StoreSendStatus(huart, status);
 }
 
 void Motor6014_OnRxEvent(UART_HandleTypeDef *huart, uint16_t size)

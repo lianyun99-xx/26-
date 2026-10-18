@@ -18,7 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "dma.h"
+#include "fdcan.h"
+#include "spi.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -45,14 +48,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static Motor6014_Port_t motor6014_port1;
-Motor6014_Status_t test1;
-Motor6014_Status_t test2;
+static Motor6014_Port_t motor6014_port3;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MPU_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -98,23 +100,34 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+  MX_UART4_Init();
+  MX_UART5_Init();
+  MX_FDCAN1_Init();
+  MX_FDCAN3_Init();
+  MX_FDCAN2_Init();
+  MX_SPI3_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-  if (Motor6014_PortInit(&motor6014_port1, &huart3,
+  if (Motor6014_PortInit(&motor6014_port3, &huart3,
                         MOTOR6014_DEFAULT_TIMEOUT_MS) != MOTOR6014_OK)
   {
     Error_Handler();
   }
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  test1=Motor6014_SetCommand(&huart3,1,MOTOR6014_MODE_FOC,
-	                              0.0f,0.0f,0.5f,0.0f,0.0f,false);
-	  test2=Motor6014_SendCommand(&huart3,1);
-	  HAL_Delay(1);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -152,7 +165,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 4;
   RCC_OscInitStruct.PLL.PLLN = 30;
   RCC_OscInitStruct.PLL.PLLP = 1;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
   RCC_OscInitStruct.PLL.PLLR = 2;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_3;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;

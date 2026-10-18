@@ -56,14 +56,14 @@ while (1)
 
 同一端口和串口只初始化一次，超时参数须处于 1–`INT32_MAX` ms；重复初始化返回参数错误。注册后该串口的 HAL DMA 收发由本驱动使用，应用不要同时调用其他 HAL 收发函数争用该串口。
 
-`Motor6014_PortInit()` 和 `Motor6014_SetCommand()` 从主上下文调用。`Motor6014_SendCommand()` 可从主上下文或 UART 空闲的 ISR 调用；如果端口正在超时恢复，ISR 调用只返回 `MOTOR6014_BUSY`，不会执行阻塞恢复。不自动轮询、不自动发送、不自动重试；应用在需要发送时显式调用发送函数。反馈仍由 HAL 回调在中断上下文解析。
+`Motor6014_PortInit()` 和 `Motor6014_SetCommand()` 从主上下文调用。`Motor6014_SendCommand()` 可从主上下文或 UART 空闲的 ISR 调用；如果端口正在超时恢复，ISR 调用会把 `MOTOR6014_BUSY` 写入对应的 `Send_status_portN`，不会执行阻塞恢复。不自动轮询、不自动发送、不自动重试；应用在需要发送时显式调用发送函数。反馈仍由 HAL 回调在中断上下文解析。
 
 ## 3. 设置并发送命令
 
 驱动参考 8010 电机的调用方式，将命令参数保存在内部 `motor6014.cmd[id]`，再按 ID 发送。设置参数不会启动 DMA，只有 `Motor6014_SendCommand()` 才会实际发送。
 
 ```c
-Motor6014_Status_t Motor6014_SetCommand(
+void Motor6014_SetCommand(
     UART_HandleTypeDef *huart,
     uint8_t id,
     Motor6014_Mode_t mode,
@@ -75,7 +75,7 @@ Motor6014_Status_t Motor6014_SetCommand(
     bool timeout_enable
 );
 
-Motor6014_Status_t Motor6014_SendCommand(
+void Motor6014_SendCommand(
     UART_HandleTypeDef *huart,
     uint8_t id
 );
@@ -95,29 +95,40 @@ Motor6014_Status_t Motor6014_SendCommand(
 设置并发送停机命令：
 
 ```c
-Motor6014_Status_t status = Motor6014_SetCommand(
+Motor6014_SetCommand(
     &huart1, 1, MOTOR6014_MODE_STOP,
     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false
 );
-if (status == MOTOR6014_OK) {
-    status = Motor6014_SendCommand(&huart1, 1);
-}
+Motor6014_SendCommand(&huart1, 1);
 ```
 
 FOC 控制调用形式如下。目标位置、速度、力矩和增益由应用依据机械条件给定，示例不在工程中自动执行：
 
 ```c
-status = Motor6014_SetCommand(
+Motor6014_SetCommand(
     &huart1, 1, MOTOR6014_MODE_FOC,
     target_position, target_velocity, target_torque,
     kp, kd, false
 );
-if (status == MOTOR6014_OK) {
-    status = Motor6014_SendCommand(&huart1, 1);
-}
+Motor6014_SendCommand(&huart1, 1);
 ```
 
-`Motor6014_SetCommand()` 检查 ID、模式、浮点参数和协议范围；成功后将未量化的参数保存到 `motor6014.cmd[id]`。`Motor6014_SendCommand()` 从该内部命令记录编码并启动 DMA。发送函数返回 `MOTOR6014_OK` 仅表示 DMA 已启动，不代表电机已经收到命令或执行完成。发送时若端口忙，函数按初始化时的 `timeout_ms` 检查并恢复超时事务；仍在期限内则返回 `MOTOR6014_BUSY`。发送启动失败不会改写已保存的命令。浮点量必须有限，增益不能为负；超出协议编码范围的数值返回错误，不做静默限幅。
+两个函数均为 `void`。函数执行结果按 `huart->Instance` 自动写入 `motor6014` 的状态字段。例如传入 `&huart3` 时写入 `motor6014.Set_status_port3` 和 `motor6014.Send_status_port3`。支持 USART1/2/3、UART4/5/7/8 和 USART6，对应端口 1–8；未知外设不会改写状态字段。
+
+`Motor6014_SetCommand()` 检查 ID、模式、浮点参数和协议范围；成功后将未量化的参数保存到 `motor6014.cmd[id]`。`Motor6014_SendCommand()` 从该内部命令记录编码并启动 DMA。状态为 `MOTOR6014_OK` 只表示 DMA 已启动，不代表电机已经收到命令或执行完成；端口忙时状态为 `MOTOR6014_BUSY`，超时或串口故障时写入相应错误状态。浮点量必须有限，增益不能为负；超出协议编码范围的数值会记录错误，不做静默限幅。
+
+例如当前工程使用 USART3：
+
+```c
+Motor6014_SetCommand(&huart3, 1, MOTOR6014_MODE_FOC,
+                     0.0f, 0.0f, 0.5f, 0.0f, 0.0f, false);
+Motor6014_SendCommand(&huart3, 1);
+
+/* 调试器中直接查看 */
+motor6014.Set_status_port3;
+motor6014.Send_status_port3;
+motor6014.data[1];
+```
 
 ```c
 /* 调试器可直接展开这些成员。修改 cmd 不会自动触发发送；
@@ -127,7 +138,7 @@ float last_target_velocity = motor6014.cmd[1].velocity;
 float last_target_torque   = motor6014.cmd[1].torque;
 ```
 
-每个串口同一时刻只允许一笔事务，发送期间使用端口的私有缓冲；之后再次调用 `SetCommand()` 不会改变已经提交的帧。应用应根据返回状态安排后续发送，避免无条件连续提交。
+每个串口同一时刻只允许一笔事务，发送期间使用端口的私有缓冲；之后再次调用 `SetCommand()` 不会改变已经提交的帧。应用应根据 `motor6014.Send_status_portN` 安排后续发送，避免无条件连续提交。
 
 端口 `busy` 表示事务是否进行中，`last_status` 在发送中为 `MOTOR6014_BUSY`，完成后为 `MOTOR6014_OK`，超时或串口故障时为 `MOTOR6014_TIMEOUT` / `MOTOR6014_UART_ERROR`。`stats` 成员提供 `tx_count`、`rx_count`、`crc_error_count`、`invalid_frame_count`、`unexpected_reply_count`、`timeout_count` 和 `uart_error_count`，例如 `motor6014_port1.stats.timeout_count`，便于在调试器中排查通信问题。`last_uart_error` 保留最近的 HAL 串口错误码。未收到反馈时保留最近一次历史有效反馈，结合更新时间使用。反馈解析通过 HAL 回调独立完成，不需要应用轮询 Service。
 
@@ -165,6 +176,7 @@ if (Motor6014_PortInit(&motor6014_port2, &huart2,
 Motor6014_SetCommand(&huart2, 2, MOTOR6014_MODE_STOP,
                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, false);
 Motor6014_SendCommand(&huart2, 2);
+/* 状态保存在 motor6014.Set_status_port2 / Send_status_port2。 */
 ```
 
 各端口的 DMA 缓冲、事务和超时互相独立，可以并行通信；所有串口仍共用 `motor6014`。不同物理电机不能在不同总线上重复使用同一 ID。同一 ID 的并发事务返回忙；驱动不永久绑定 ID 与串口，路由变更由应用负责。
