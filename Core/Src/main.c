@@ -28,6 +28,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "motor6014.h"
+#include"3508_driver.h"
+#include"AS01.h"
+#include"BMI088driver.h"
+#include "Attitude_solution.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,7 +52,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-static Motor6014_Port_t motor6014_port3;
+static Motor6014_Port_t motor6014_port[6];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -108,11 +112,19 @@ int main(void)
   MX_SPI3_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-  if (Motor6014_PortInit(&motor6014_port3, &huart3,
+  D3508_Init();//Motors存储3508电机反馈
+  FDCAN1_Filter_Init();
+  FDCAN2_Filter_Init();
+  BMI088_init(); //g_Attitude角度保存地址
+  Attitude_Init();
+  if (Motor6014_PortInit(&motor6014_port[3], &huart3,
                         MOTOR6014_DEFAULT_TIMEOUT_MS) != MOTOR6014_OK)
   {
     Error_Handler();
   }
+	if (NRF24L01_Check_SPI() == 0) {
+		NRF24L01_Init();
+	}
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -195,6 +207,29 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    FDCAN_RxHeaderTypeDef RxHeader;
+    uint8_t RxData[64]; /* HAL copies the received DLC before driver validation. */
+
+    if ((RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) != 0) {
+        while (HAL_FDCAN_GetRxFifoFillLevel(hfdcan, FDCAN_RX_FIFO0) > 0) {
+            if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &RxHeader, RxData) == HAL_OK) {
+                (void)D3508_Decode(hfdcan, &RxHeader, RxData);
+            } else {
+                break;
+            }
+        }
+    }
+}
+void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t ErrorStatusITs)
+{
+    if ((ErrorStatusITs & FDCAN_IT_BUS_OFF) != 0U) {
+        FDCAN_ProtocolStatusTypeDef status = {0};
+        if (HAL_FDCAN_GetProtocolStatus(hfdcan, &status) != HAL_OK || status.BusOff)
+            D3508_OnBusOff(hfdcan);
+    }
+}
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
   Motor6014_OnRxEvent(huart, Size);
@@ -238,6 +273,28 @@ void MPU_Config(void)
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
 
+}
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM4 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM4)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
 }
 
 /**
