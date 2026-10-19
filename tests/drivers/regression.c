@@ -328,7 +328,51 @@ static void startup_read_test(void)
         CHECK(spi_calls==calls+3); CHECK(ready==(k==399));
     }
     Attitude_Data_t a; CHECK(Attitude_GetSnapshot(&a) && a.Data_Valid);
+    CHECK(a.EKF_Valid);
+    NEAR(a.Quaternion_W*a.Quaternion_W + a.Quaternion_X*a.Quaternion_X +
+         a.Quaternion_Y*a.Quaternion_Y + a.Quaternion_Z*a.Quaternion_Z, 1.0, 0.0001);
     NEAR(a.Angle_Pitch,0,0.001); NEAR(a.Angle_Roll,0,0.001);
+    {
+        BMI088_Sample motion = s;
+        float pitch_before = a.Angle_Pitch;
+        tick += 5;
+        motion.sequence += 1;
+        motion.timestamp_ms = tick;
+        motion.accel[2] = 2.0f * BMI088_GRAVITY; /* Skip accel correction. */
+        motion.gyro[0] = 1.0f;
+        motion.gyro[1] = 0.0f;
+        motion.gyro[2] = 0.0f;
+        Attitude_ProcessSample(&motion, 0.005f);
+        CHECK(g_Attitude.Data_Valid && g_Attitude.EKF_Valid);
+        CHECK(g_Attitude.Angle_Pitch > pitch_before);
+        {
+            float pitch_after_gyro = g_Attitude.Angle_Pitch;
+            unsigned sample_index;
+            for (sample_index = 0; sample_index < 6; ++sample_index) {
+                tick += 5;
+                motion.sequence += 1;
+                motion.timestamp_ms = tick;
+                motion.accel[2] = BMI088_GRAVITY;
+                motion.gyro[0] = 0.0f;
+                Attitude_ProcessSample(&motion, 0.005f);
+            }
+            CHECK(g_Attitude.Data_Valid && g_Attitude.EKF_Valid);
+            CHECK(fabs(g_Attitude.Angle_Pitch) < fabs(pitch_after_gyro));
+        }
+        NEAR(g_Attitude.Quaternion_W*g_Attitude.Quaternion_W +
+             g_Attitude.Quaternion_X*g_Attitude.Quaternion_X +
+             g_Attitude.Quaternion_Y*g_Attitude.Quaternion_Y +
+             g_Attitude.Quaternion_Z*g_Attitude.Quaternion_Z, 1.0, 0.0001);
+        Attitude_ResetYaw();
+        tick += 5;
+        motion.sequence += 1;
+        motion.timestamp_ms = tick;
+        motion.accel[2] = BMI088_GRAVITY;
+        motion.gyro[0] = 0.0f;
+        Attitude_ProcessSample(&motion, 0.005f);
+        CHECK(g_Attitude.Data_Valid && fabs(g_Attitude.Angle_Yaw) < 0.01);
+    }
+    CHECK(Attitude_GetSnapshot(&a));
     uint32_t valid_time=a.Last_Valid_Update_ms;
     tick+=5; fail_call=spi_calls+1; spi_failure=HAL_TIMEOUT;
     CHECK(!BMI088Read()); CHECK(Attitude_GetSnapshot(&a) && !a.Data_Valid);

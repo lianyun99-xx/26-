@@ -42,6 +42,20 @@ typedef struct {
     float Angle_Roll;
     float Angle_Yaw;
 
+    /* Quaternion attitude, ordered as w, x, y, z. */
+    float Quaternion_W;
+    float Quaternion_X;
+    float Quaternion_Y;
+    float Quaternion_Z;
+    uint8_t EKF_Valid;
+    /* Covariance diagonal and innovation are ordered by body X/Y/Z error. */
+    float EKF_Covariance_X;
+    float EKF_Covariance_Y;
+    float EKF_Covariance_Z;
+    float EKF_Innovation_X;
+    float EKF_Innovation_Y;
+    float EKF_Innovation_Z;
+
     float flt_ax;
     float flt_ay;
     float flt_az;
